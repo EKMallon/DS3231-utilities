@@ -4,6 +4,7 @@
 
 <figure><img  align="right" width="400" height="370" src="images/UNOgpswithRTC_400x370pix_241019.jpg"></figure>
 Various utility programs for TimeSync to GPS, Adjusting Age Register, etc. Some of the programs here are based on the work of others, with attributution and links to the original sources. The versions here have been tweaked where necessary to work with the UNO - NEO6m GPS combination in the photo.</br>
+</br>
 
 For description of how I use these utilities see the blog post at: [The e360: A Classroom Data Logger for Science](https://thecavepearlproject.org/2023/12/01/the-e360-a-10-classroom-data-logger-for-science/)
 </br>
