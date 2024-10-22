@@ -10,7 +10,6 @@
 // The goal is to provide a starting point for self-built student projects in environmental monitoring at Northwestern University
 
 #include <Wire.h>
-//#include <EEPROM.h>         // NO this code is running on the UNO NOT THE PROMINI
 
 #include <SoftwareSerial.h>   // Include software serial library because UNO only has one serial line
 static const int RXPin = 12, TXPin = 11; // the pin#s on the ARDUINO side
@@ -197,24 +196,6 @@ if (rtcTimeHasBeenSet){
     
     i2c_setRegisterBit(DS3231_ADDRESS,DS3231_STATUS_REG,7,0); //clear the OSF flag in the RTC after time is set 
     //delay(15);
-
-/*  all of this is functionally useless because this code is running on the UNO  - NOT THE PROMINI!   
-    //EEPROM.put(20,currentRTCsyncTime);  // NO this is saving the time into the UNO processor - NOT the Promini!
-    runtime_seconds = currentRTCsyncTime - previousRTCsyncTime;  // previous sync time was stored in 328p internal eeprom @20-23 by this program
-    Serial.print(F("After running "));Serial.print(runtime_seconds);Serial.println(F(" seconds"));
-    Serial.print(F("New syncTime:")); Serial.print(currentRTCsyncTime); Serial.println(F(" Saved to eeprom @20-23"));
-    // CHECK: Convert Timestamp back to Human date at https://www.epochconverter.com/
-
-  // Calculate drift:
-  // NOTE: this can only be run if this same code was used previously on the logger & stored EEPROM.put(20,currentRTCsyncTime);
-  if((time_shift-1) && (runtime_seconds>86400)){ //RTC must run at least 1 day to detect drift, and can't do the calculation if timeshift=0
-    drift_in_ppm = -(time_shift-1)*1000000.0; drift_in_ppm = drift_in_ppm / runtime_seconds;
-    float_Buffer=fabs(drift_in_ppm); int32_Buffer = (int32_t)float_Buffer;
-      if(int32_Buffer<1000){  // dont report drift if too large because interval was too short for a meaningful result
-        Serial.print(F("For an average drift rate of "));Serial.print(drift_in_ppm);Serial.println(F(" ppm"));
-      }
-      }
-*/  
 
     Serial.println(F("Lag:RTC 1Hz falling edge micros - GPS leading edge rise [SB <0.1 msec]"));
     attachInterrupt(0, clockIRQ, FALLING);      // RTC SQW alarm connected to Pin2 - square wave falling edge coincides with the START of each new RTC second 
