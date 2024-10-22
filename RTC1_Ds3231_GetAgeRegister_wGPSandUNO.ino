@@ -1,5 +1,3 @@
-//This code uploaded to GITHUB 20241022
-
 /*  
 ======================================================================================
 This code is from an Arduino PlayGround post by ShermanP:
