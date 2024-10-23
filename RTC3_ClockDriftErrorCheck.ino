@@ -11,6 +11,7 @@ I'm using an UNO board powering a NEO6M at 5v while powering the RTC on the UNOs
 is run with the RTC near the Cr2032 runtime voltage because this affects the RTC oscilator
 I added input at the start so that the RTC aging register can be adjusted before the run  
 All described in detail at:
+https://thecavepearlproject.org/2024/10/22/setting-accurate-rtc-time-with-a-gps-the-ds3231-aging-offset-to-reduce-drift/
 ====================================================================================================
 */
 
