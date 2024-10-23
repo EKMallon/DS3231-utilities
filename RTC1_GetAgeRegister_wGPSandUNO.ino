@@ -6,7 +6,8 @@ https://forum.arduino.cc/t/ds3231-setting-aging-register-to-optimum-value/111282
 I have made some TRIVIAL CHANGES here that were needed for the Cave Pearl Loggers which cut the VCC line to the RTC to save power
 AND I use an UNO board powering a NEO6M at 5v while supplying the RTC module via the UNOs 3v output
 so the test is done with the DS3231 near the Cr2032 runtime voltage (because this affects the RTC base frequency)
-This testing setup described in detail on our blog at:
+This testing setup described in detail on our blog at: 
+https://thecavepearlproject.org/2024/10/22/setting-accurate-rtc-time-with-a-gps-the-ds3231-aging-offset-to-reduce-drift/
 
 If you need DS3231 age register determination for your project then I recommend you go
 to ShermanP's ORIGINAL GitHub repo at https://github.com/gbhug5a/DS3231-Aging-GPS
