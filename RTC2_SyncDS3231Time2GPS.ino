@@ -4,7 +4,7 @@
 // WITH the logger's ProMini asleep or running blink the entire time so it does not pay any attention to the I2C traffic
 // Loggers should have perfectly synchronized LED blinks after this procedure.
 // This code assumes that the GPS PPS is connected to D3 and the RTC SQW is connected to D2
-// see the accompanying blog post at: 
+// see the accompanying blog post at: https://thecavepearlproject.org/2024/10/22/setting-accurate-rtc-time-with-a-gps-the-ds3231-aging-offset-to-reduce-drift/
 //=====================================================================================================================
 // This program supports an ongoing series of DIY 'Classroom Logger' tutorials from the Cave Pearl Project. 
 // The goal is to provide a starting point for self-built student projects in environmental monitoring at Northwestern University
