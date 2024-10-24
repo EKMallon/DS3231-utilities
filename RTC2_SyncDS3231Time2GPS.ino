@@ -210,20 +210,19 @@ if (rtcTimeHasBeenSet){
 
     byteBuffer1=0; 
     do{
-
       if (gpsValid && rtcValid)
-        {
+        {        
         diff = Tclock - Tgps;             // difference between the RTC and the GPS pulses. Note: breaks with overflow once every 70 minutes, sending 4294967.500ms 
         if(abs(diff)>500000){
-          Serial.print(".");  // then we miss-timed one of the interrupts - try again
-          noInterrupts(); gpsValid = rtcValid = false ; interrupts();
+          Serial.print("."); // RTC has drifted backwards and now preceeds GPS pulse! must switch the reading order
+          noInterrupts(); gpsValid = false ; interrupts();
           }else{
           noInterrupts(); gpsValid = rtcValid = false ; interrupts();
           diffMs = diff / 1000.0;         // divide by 1000 to convert micros into millis
           dtostrf(diffMs, 7, 3, buff);    // Convert to a string with 7 digits and 3 decimal places. Negative output OK
           Serial.println();Serial.print(buff); Serial.print(F("ms")); // Display the time difference between the GPS PPS and the RTC 1Hz SQW alarm
           byteBuffer1++;
-          }
+         }
         }
  
     }while(byteBuffer1<6);           // change value here to make the run longer, but remember to disable the SQW alarm or it will run forever.
@@ -262,11 +261,11 @@ void gpsIRQ() {       // Process the GPS interrupt.
 } 
 
 void clockIRQ() {     // Process the clock interrupt.
-  //if (gpsValid && !rtcValid)    // we could force the update order(?) but drift can make the RTC preceed the GPS
-  //  {
+  if (!rtcValid)    // we could force the update order(?) but drift can make the RTC preceed the GPS
+    {
     Tclock = micros();
     rtcValid = true;
-  // }
+   }
 }
 
 uint32_t RTC_DS3231_makeUnixtime() {       // only call this function AFTER populating the global t_ variables
