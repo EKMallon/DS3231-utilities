@@ -9,12 +9,19 @@
 // This program supports an ongoing series of DIY 'Classroom Logger' tutorials from the Cave Pearl Project. 
 // The goal is to provide a starting point for self-built student projects in environmental monitoring at Northwestern University
 
+#define fileNAMEonly (strrchr(__FILE__, '/') ? strrchr(__FILE__, '/') + 1 : strrchr(__FILE__, '\\') ? strrchr(__FILE__, '\\') + 1 : __FILE__) //from: https://stackoverflow.com/questions/8487986/file-macro-shows-full-path
+const char compileDate[] PROGMEM = __DATE__;  //  built-in function in C++ makes text string: Jun 29 2023
+const char compileTime[] PROGMEM = __TIME__;  //  built-in function in C++ makes text string: 10:04:18
+
 #include <Wire.h>
 
 #include <SoftwareSerial.h>   // Include software serial library because UNO only has one serial line
 static const int RXPin = 12, TXPin = 11; // the pin#s on the ARDUINO side
 static const uint32_t GPSBaud = 9600; //default baud rate for the UART GPS NEO-6M is 9600
 SoftwareSerial SerialGPS = SoftwareSerial(RXPin,TXPin);
+// NOTE: SoftwareSerial in Arduino can interfere with other libraries or Hardware Serial when used at slower baud rates like this 
+// and it can be sensitive to interrupt usage by other libraries.
+// running two instances? https://arduino.stackexchange.com/questions/4530/how-can-i-stop-softwareserial-from-receiving-data-and-re-enable-it-at-some-other
 
 #include <TinyGPS++.h>        // https://arduiniana.org/libraries/tinygpsplus/
 TinyGPSPlus gps;
@@ -29,6 +36,8 @@ uint8_t dmodRemainder;
 #define DS3231_ADDRESS     0x68                           // this is the I2C bus address of our RTC chip
 #define DS3231_STATUS_REG  0x0F                           // reflects status of internal operations
 #define DS3231_CONTROL_REG 0x0E                           // enables or disables clock functions
+#define DS3231_AGING_OFFSET_REG 0x10                      // Aging offset register
+
 char CycleTimeStamp[] = "0000-00-00,00:00:00";            // 16 character array to store human readble time (with seconds)
 uint8_t t_second,t_minute,t_hour,t_day,t_month,t_dow;     // current time variables populated by calling RTC_DS3231_getTime()
 uint16_t t_doy,t_year;                                    // current year //note: yOff = raw year to which you need to add 2000
@@ -60,6 +69,7 @@ int8_t byteBuffer2,byteBuffer1;
 char buff[10];   // String buffer for output of diffMs
 volatile boolean state = false; 
 
+int8_t RTCagingOffset = 0;
 
 //======================================================================
 void setup(void) {
@@ -72,15 +82,30 @@ void setup(void) {
   i2c_setRegisterBit(DS3231_ADDRESS, DS3231_CONTROL_REG, 7, 0); // Enable Oscillator (EOSC).  This bit is clear (logic 0) when power is first applied.  EOSC = 0 IS REQUIRED with OUR LOGGER DESIGN:
                                                                 // when EOSC (bit7) is 0, the RTC oscillator continues running during battery powered operation. Otherwise it would stop.
  
-  Serial.begin(500000);
-  Serial.println(F(" <- Ignore this old serial buffer cruft"));Serial.println(); // sometimes there are 'leftover' characters in the outgoing buffer
+  Serial.begin(500000); Serial.println(F(" <- Ignore this old serial buffer cruft"));Serial.println(); // sometimes there are 'leftover' characters in the outgoing buffer
   while (Serial.available() != 0 ) {Serial.read();}   // clears the serial monitor input buffer
+
+ //NOTE:(__FlashStringHelper*) is needed to print variables is stored in PROGMEM instead of regular memory
+  Serial.print(F("CodeBuild:,")); Serial.print(fileNAMEonly);         // or use Serial.println((__FlashStringHelper*)codebuild); //for the entire path + filename
+  Serial.print(F("    Compiled: "));Serial.print((__FlashStringHelper*)compileDate);
+  Serial.print(F(" @ ")); Serial.println((__FlashStringHelper*)compileTime);
+  
   Serial.println(F("GPS2RTC timesync: MOVE gpsPPS signal jumper to pin D3, RTC SQW on D2"));
   Serial.println(F("Wait until the PPS / LED blinks on the GPS module have started,"));
-  Serial.println(F("Then enter any key to set the RTC time from the GPS"));Serial.println();
-  
-    while (Serial.available() != 0 ) {Serial.read();} // this just clears out any residual data in serial send buffer before starting our menu  
-    //Serial.setTimeout(1000); // 1000 milliseconds is the default timeout for the Serial.read(); command
+  Serial.println(F("Then input the RTC aging register setting to use: -128 to +127 [0 if unknown]"));
+
+do { 
+    Serial.setTimeout(100000);                              // parseInt will normally “time out” after default set point is 1 second (1000 milliseconds).
+    while (Serial.available() != 0 ) {Serial.read();}       // clears the serial buffer  
+    RTCagingOffset = Serial.parseInt();                     // parseInt() actually returns a long(?)
+    } while((RTCagingOffset<-128) || (RTCagingOffset>127)); // if condition fails & you have to re-enter the number
+
+   i2c_writeRegisterByte(DS3231_ADDRESS,DS3231_AGING_OFFSET_REG,RTCagingOffset);
+   delay(15); RTCagingOffset = i2c_readRegisterByte(DS3231_ADDRESS,DS3231_AGING_OFFSET_REG);
+   Serial.print(F("RTCage set to: ")); Serial.println(RTCagingOffset);Serial.println();
+
+/*  the enter any key option: 
+  //Serial.setTimeout(1000); // 1000 milliseconds is the default timeout for the Serial.read(); command
     inByte=0;
     wait4input = true;
     startMenuStart = millis();                          //Beginning of time-out period must be unsigned long variable
@@ -93,10 +118,10 @@ void setup(void) {
       Serial.println(F("8 minute Time out with NO commands - will not proceed.")); 
       while(1);}
     }//while(wait4input)
-
+*/
 //=========================================================== 
 
-Serial.println(F("RTC will be set after latency falls below 200 msec:"));
+Serial.println(F("RTC will be set after latency falls below 200 msec:"));Serial.flush();
   //wait here for beginning of PPS pulse - that way the NEMA update completes well before the FOLLOWING pulse
   //then WAIT for NEXT PPS pulse rising edge and then set the RTC time registers: // PINB is just a faster version of digitalRead  
   while(digitalRead(3));   // while(PIND & (1 << 3));         //while(digitalRead(3));  // wait for remainder of D3 pin HIGH pulse duration (if still high)
@@ -109,6 +134,8 @@ Serial.println(F("RTC will be set after latency falls below 200 msec:"));
 
 void loop() {
 
+  // for some reason every pass through this loop is now causing a carridge return 
+  //  on the serial monitor window?
   while (SerialGPS.available()) {
     if (gps.encode(SerialGPS.read())) {     // process the gps NEMA messages
 
@@ -170,20 +197,11 @@ void loop() {
       gpsTime[12] = dmodRemainder + 48;       //second % 10 + 48;
       
       Serial.print(gpsDate);Serial.print(" ");Serial.print(gpsTime);Serial.println(F("  [Fix age < 200msec]"));  
-      } //terminates: if (FixAge < 300){
+      } //terminates: if (( gps.date.year()>2000 )&&( gps.satellites.age()<200 )){
     } //terminates: if (gps.encode(SerialGPS.read()))
   } //terminates: while (SerialGPS.available())
     
 if (rtcTimeHasBeenSet){ 
-
-    // Enable Square wave output on RTC
-    // When the INTCN (bit2) is set to logic 0, a square wave is output on SQW
-    // Control Register (0Eh): setting RS2(bit4) and  RS1(bit3)  set both to logic 0 configures 1 hz frequency
-    // the output pattern is low for 500msec and then high for 500msec
-    // so the RTCs square wave falling edge coincides with the START of each new RTC second  //https://forum.arduino.cc/t/ds3231-1hz-output-timing-profile/1139730/4
-    byteBuffer1=i2c_readRegisterByte(DS3231_ADDRESS,DS3231_CONTROL_REG);
-    byteBuffer1 &= B11100011;    //'&=0' here changes only only our three target bits
-    i2c_writeRegisterByte(DS3231_ADDRESS,DS3231_CONTROL_REG,byteBuffer1);
 
     RTC_DS3231_getTime();    // loads global t_ variables from RTC registers (to check that RTC has actually been set)
     currentRTCsyncdTime = RTC_DS3231_makeUnixtime();    // with values currently in global t_ variables
@@ -197,13 +215,13 @@ if (rtcTimeHasBeenSet){
     i2c_setRegisterBit(DS3231_ADDRESS,DS3231_STATUS_REG,7,0); //clear the OSF flag in the RTC after time is set 
     //delay(15);
 
-    Serial.println(F("Lag:RTC 1Hz falling edge micros - GPS leading edge rise [SB <0.1 msec]"));
+    Serial.println(F("Lag: RTC 1Hz falling edge micros - GPS leading edge rise: "));
     attachInterrupt(0, clockIRQ, FALLING);      // RTC SQW alarm connected to Pin2 - square wave falling edge coincides with the START of each new RTC second 
     attachInterrupt(1, gpsIRQ, RISING);         // GPS PPS connected to Pin3  - leading edge pulses high
-    
+    enableRTC1HzOutput();
+        
     // wait for SQW to stabilize
     // first cycle after can be short (?) https://forum.arduino.cc/t/ds3231-1hz-output-timing-profile/1139730/4
-    noInterrupts(); gpsValid = rtcValid = false; interrupts();
     while (gpsValid == false){}
     while (rtcValid == false){}
     noInterrupts(); gpsValid = rtcValid = false; interrupts();
@@ -213,43 +231,46 @@ if (rtcTimeHasBeenSet){
       if (gpsValid && rtcValid)
         {        
         diff = Tclock - Tgps;             // difference between the RTC and the GPS pulses. Note: breaks with overflow once every 70 minutes, sending 4294967.500ms 
-        if(abs(diff)>500000){
-          Serial.print("."); // RTC has drifted backwards and now preceeds GPS pulse! must switch the reading order
-          noInterrupts(); gpsValid = false ; interrupts();
-          }else{
+        //if((abs(diff))>500000){
+        //  Serial.print("."); // RTC has drifted backwards and now preceeds GPS pulse! must switch the reading order
+        //  noInterrupts(); gpsValid = false ; interrupts();
+        //  }else{
           noInterrupts(); gpsValid = rtcValid = false ; interrupts();
           diffMs = diff / 1000.0;         // divide by 1000 to convert micros into millis
           dtostrf(diffMs, 7, 3, buff);    // Convert to a string with 7 digits and 3 decimal places. Negative output OK
           Serial.println();Serial.print(buff); Serial.print(F("ms")); // Display the time difference between the GPS PPS and the RTC 1Hz SQW alarm
           byteBuffer1++;
-         }
+        // }
         }
  
     }while(byteBuffer1<6);           // change value here to make the run longer, but remember to disable the SQW alarm or it will run forever.
 
-    detachInterrupt(1);detachInterrupt(0); Serial.println();
-    noInterrupts(); gpsValid = rtcValid = false; interrupts();  
-    // DISABLE the RTC 1Hz SQW output by setting ICTN (bit2) to logic 1 (default) 
-    byteBuffer1=i2c_readRegisterByte(DS3231_ADDRESS,DS3231_CONTROL_REG);
-    byteBuffer1 |= B00000100;    // with '|=' only the 1's will set, others left unchanged //'&=0' here changes only only our three target bits
-    i2c_writeRegisterByte(DS3231_ADDRESS,DS3231_CONTROL_REG,byteBuffer1);
 
+// NOTE so far in testing the bump does not work - might have to write a bogus value first?
     state = true; byteBuffer1 = 0;
-    Serial.println();Serial.println(F("Run Again? y/n "));
+    Serial.println();Serial.println();Serial.print(F("Now Enter s,b,x: 's' = sync again, 'x' = EXIT"));
     while (state) {
         if (Serial.available()) {byteBuffer1 = Serial.read();}  //.read captures only character at a time from the serial monitor window        
         switch (byteBuffer1) {
-          case 'y': 
-              Serial.println();
-              rtcTimeHasBeenSet=false; state=false; 
+          
+          case 's': 
+              detachInterrupt(1);detachInterrupt(0);
+              disableRTC1HzOutput(); Serial.println();
+              gpsValid = rtcValid = false; rtcTimeHasBeenSet=false; state=false; 
               break;
-          case 'n': 
+              
+        case 'x': 
+            detachInterrupt(1);detachInterrupt(0);
+            gpsValid = rtcValid = false; disableRTC1HzOutput();  
+            Serial.println(); Serial.print("Good bye!");
             while(1);       // this TRAPs THE PROCESSOR
-            break;
-          default: break;
-              }           // terminates switch case
+            break; 
+         default: break;
+         }                // terminates switch case
       }                   // terminates while(state)  
-    }                     // terminates: if(rtcTimeHasBeenSet) 
+      
+    }                     // terminates: if(rtcTimeHasBeenSet)
+    
 }                         // terminates: void loop()
 //==============================================================================
 
@@ -261,12 +282,30 @@ void gpsIRQ() {       // Process the GPS interrupt.
 } 
 
 void clockIRQ() {     // Process the clock interrupt.
-  if (!rtcValid)    // we could force the update order(?) but drift can make the RTC preceed the GPS
-    {
+  //if (!rtcValid)    // we could force the update order(?) but drift can make the RTC preceed the GPS
+  //  {
     Tclock = micros();
     rtcValid = true;
-   }
+  // }
 }
+
+void enableRTC1HzOutput(){
+    // Enable Square wave output on RTC
+    // When the INTCN (bit2) is set to logic 0, a square wave is output on SQW
+    // Control Register (0Eh): setting RS2(bit4) and  RS1(bit3)  set both to logic 0 configures 1 hz frequency
+    // the output pattern is low for 500msec and then high for 500msec
+    // so the RTCs square wave falling edge coincides with the START of each new RTC second  //https://forum.arduino.cc/t/ds3231-1hz-output-timing-profile/1139730/4
+    byteBuffer1=i2c_readRegisterByte(DS3231_ADDRESS,DS3231_CONTROL_REG);
+    byteBuffer1 &= B11100011;    //'&=0' here changes only only our three target bits
+    i2c_writeRegisterByte(DS3231_ADDRESS,DS3231_CONTROL_REG,byteBuffer1);
+    }
+
+void disableRTC1HzOutput(){
+    // DISABLE the RTC 1Hz SQW output by setting ICTN (bit2) to logic 1 (default) 
+    byteBuffer1=i2c_readRegisterByte(DS3231_ADDRESS,DS3231_CONTROL_REG);
+    byteBuffer1 |= B00000100;    // with '|=' only the 1's will set, others left unchanged //'&=0' here changes only only our three target bits
+    i2c_writeRegisterByte(DS3231_ADDRESS,DS3231_CONTROL_REG,byteBuffer1);
+    }
 
 uint32_t RTC_DS3231_makeUnixtime() {       // only call this function AFTER populating the global t_ variables
 //----------------------------------
@@ -416,14 +455,14 @@ byte i2c_writeRegisterByte(uint8_t deviceAddress, uint8_t registerAddress, uint8
   Wire.write(newRegisterByte);
   byte result = Wire.endTransmission();
 
-  if (result > 0)   //error checking
-  {
+//if (result > 0)   //error checking
+//  {
     //if(ECHO_TO_SERIAL){                           //NOTE: only call halt on error if in debug mode!
-      Serial.print(F("FAIL in I2C register write! Result code: "));
-      Serial.println(result); Serial.flush();
-      while(1); // stops the processor
+      //Serial.print(F("FAIL in I2C register write! Result code: "));
+      //Serial.println(result); Serial.flush();
+      //while(1); // stops the processor
     //}
-  }
+//}
   // LowPower.powerDown(SLEEP_15MS, ADC_OFF, BOD_OFF);  // some sensors need this settling time after a register change?
   return result;
 }
