@@ -6,7 +6,7 @@ https://forum.arduino.cc/t/ds3231-setting-aging-register-to-optimum-value/111282
 I have made some TRIVIAL CHANGES here that were needed for the Cave Pearl Loggers which cut the VCC line to the RTC to save power
 AND I use an UNO board powering a NEO6M at 5v while supplying the RTC module via the UNOs 3v output
 so the test is done with the DS3231 near the Cr2032 runtime voltage (because this affects the RTC base frequency)
-This testing setup described in detail on our blog at: 
+This testing setup described in detail on our blog at:
 https://thecavepearlproject.org/2024/10/22/setting-accurate-rtc-time-with-a-gps-the-ds3231-aging-offset-to-reduce-drift/
 
 If you need DS3231 age register determination for your project then I recommend you go
@@ -14,6 +14,18 @@ to ShermanP's ORIGINAL GitHub repo at https://github.com/gbhug5a/DS3231-Aging-GP
 being sure to read the PDF there describing how this code works
 ======================================================================================
 */
+//logRTC_Temperature
+#define DS3231_ADDRESS     0x68               // this is the I2C bus address of our RTC chip
+#define DS3231_STATUS_REG  0x0F               // reflects status of internal operations
+#define DS3231_CONTROL_REG 0x0E               // enables or disables clock functions
+#define DS3231_TMP_UP_REG  0x11               // temperature registers (upper byte 0x11 & lower 0x12) gets updated every 64sec
+#define DS3231_AGING_OFFSET_REG 0x10          // Aging offset register
+int16_t rtc_TEMP_degCx4 = 0;
+float floatBuffer = 9999.99;                  // for float calculations
+
+#define fileNAMEonly (strrchr(__FILE__, '/') ? strrchr(__FILE__, '/') + 1 : strrchr(__FILE__, '\\') ? strrchr(__FILE__, '\\') + 1 : __FILE__) //from: https://stackoverflow.com/questions/8487986/file-macro-shows-full-path
+const char compileDate[] PROGMEM = __DATE__;  //  built-in function in C++ makes text string: Jun 29 2023
+const char compileTime[] PROGMEM = __TIME__;  //  built-in function in C++ makes text string: 10:04:18
 
 #include <Wire.h>
 #define flagsREG EIFR                     // ATMega328P interrupt flags register
@@ -45,7 +57,8 @@ void setup() {
   pinMode(8,INPUT);                       // Timer1 capture input - from GPS (ICP1)
   pinMode(RTCpin,INPUT_PULLUP);           // Hardware interrupt on D2 - from RTC
   
-  Wire.begin();
+  Wire.begin(); 
+  TWBR = 2; // 400khz I2C bus
   // BBSQW (Battery power ALARM Enable) must be set on RTCs running from Vbat when powered from the coincell bkup battery
   i2c_setRegisterBit(0x68,0x0E,6,1);  // CONTROL_REG 0Eh Bit 6 BBSQW (Battery powered ALARM Enable)
   delay(15);// I2C transaction also starts the RTC oscilator if only powered by Vbat line
@@ -55,9 +68,15 @@ void setup() {
   Serial.begin(500000);
   Serial.println(F(" <- Ignore this old serial buffer cruft"));Serial.println();// clears any leftover junk in the outgoing buffer
   while (Serial.available() != 0 ) {Serial.read();}  // clears serial input buffer
-  Serial.println(F("AgeReg: MOVE GPS/PPS signal wire to D8, +RTCSQW on D2"));
-  Serial.println(F("Wait until the PPS / LED flashes on the GPS module have started,"));
-  Serial.println(F("Then Enter any key to begin"));Serial.println();
+
+ //NOTE:(__FlashStringHelper*) is needed to print variables is stored in PROGMEM instead of regular memory
+  Serial.print(F("CodeBuild:,")); Serial.print(fileNAMEonly);         // or use Serial.println((__FlashStringHelper*)codebuild); //for the entire path + filename
+  Serial.print(F("    Compiled: "));Serial.print((__FlashStringHelper*)compileDate);
+  Serial.print(F(" @ ")); Serial.println((__FlashStringHelper*)compileTime);
+
+  Serial.println(F("Must Connect: GPS/PPS signal to D8, RTC SQW to D2"));
+  Serial.println(F("Wait until the PPS / LED flashes on the GPS module indicates a fix,"));
+  Serial.println(F("Then Enter any key to begin..."));Serial.println();
 
   int key1 = 0;
   while ((key1 != 10) && (key1 != 13)) {
@@ -93,18 +112,18 @@ void setup() {
   updateReg(0x0E);
   detachInterrupt(digitalPinToInterrupt(RTCpin));  // will assign new ISR for D2
   flagsREG = 3;
-  Serial.print (F("1KHz squarewave makes ")); Serial.print(Square);
-  Serial.println (F(" cycles over 2 seconds."));
+  Serial.print(F("1KHz squarewave makes ")); Serial.print(Square);
+  Serial.print(F(" cycles over 2 seconds. "));
   if (Square < 500) {
     isSN = false;
     ppm = Mdivisor;                       // expected change from Aging +/- 1
-    Serial.println (F("So this is a DS3231M"));
+    Serial.print(F("This is a DS3231M"));
   }
   else {
     ppm = SNdivisor;                      // expected change from Aging +/- 1
-    Serial.println (F("So this is a DS3231SN"));
+    Serial.print(F("This is a DS3231SN"));
   }
-  Serial.println();
+  Serial.println();Serial.println();
   if (F_CPU == 8000000) ppm /= 2;         // if 8MHz Pro Mini
 
   while(digitalRead(8));                  // wait for GPS low, then
@@ -132,11 +151,11 @@ void setup() {
   attachInterrupt(digitalPinToInterrupt(RTCpin),rtcISR, FALLING);
   flagsREG = 3;
   sei();
-  Serial.println (F("Enter 'An' to change Aging to n (-128 to 127)"));
-  Serial.println (F("Each Cycle takes 300 seconds = 5min per test > keep the Serial Monitor open"));
-  Serial.println (F("Wait for at least 3 screen non-zero adjustments (takes ~20 minutes)"));
-  Serial.println (F("Value does not usually change much after that"));
+  Serial.println (F("Each Cycle takes 5 minutes - wait at least 4 non-zero adjustments (~20min)"));
+  Serial.println (F("Enter 'An' to set Aging 'during' the test to n (-128 to 127)"));
   Serial.println (F("Enter 'Q' to quit, or 'T' to enter new date/time")); Serial.println();
+// Note I've altered the output slightly for graphing in a spreadsheet - collum headers are:
+  Serial.println (F("RTC temp[°C],Difference, deltaDiff, deltaAging, Aging Offset")); //Serial.println();
 }
 
 void loop() {
@@ -176,16 +195,22 @@ void loop() {
         oldDiff = Diff;
         if (isSN) Pending = true;         // force conversion if SN
       }
-      Serial.print ("Diff "); Serial.println(Diff);   // print results
-      Serial.print ("deltaDiff ");
+
+      rtc_TEMP_degCx4 = RTC_DS3231_getTemp();floatBuffer=rtc_TEMP_degCx4/4.0;
+      Serial.println();Serial.print(floatBuffer,2); Serial.print(",");
+      
+      //Serial.print ("Diff:,"); 
+      Serial.print(Diff); Serial.print(",");   // print results
+      //Serial.print (",deltaDiff:,");
       if (deltaAging == 0) {
         Serial.print("[");
         Serial.print(deltaDiff);
-        Serial.println("]");
-      }
-      else Serial.println(deltaDiff);
-      Serial.print ("deltaAging "); Serial.println(deltaAging);
-      Serial.print ("Aging "); Serial.println(Aging); Serial.println();
+        Serial.print("]");
+      }else {Serial.print(deltaDiff);}
+      //Serial.print (",deltaAging:,"); 
+      Serial.print(",");Serial.print(deltaAging);
+      //Serial.print (",AgeRegister:,"); 
+      Serial.print(",");Serial.print(Aging);
 
       if (Restart==32) Restart = Period;  // switch to 5 minutes after run-in
       if (fineFlag) Restart = finePeriod; // switch to 3.33 minutes in fine mode
@@ -346,4 +371,23 @@ byte i2c_writeRegisterByte(uint8_t deviceAddress, uint8_t registerAddress, uint8
   Wire.write(newRegisterByte);
   byte result = Wire.endTransmission();
   return result;
+}
+
+// Returns int16_t temperature in Celsius times four. but defines a union
+int16_t RTC_DS3231_getTemp(){
+    union int16_byte {
+        int16_t i;
+        uint8_t b[2];
+    } rtcTemp;
+
+  Wire.beginTransmission(DS3231_ADDRESS);
+  Wire.write(DS3231_TMP_UP_REG);        // set the memory pointer inside the RTC to first temp register
+  Wire.endTransmission();
+  
+  Wire.requestFrom(DS3231_ADDRESS, 2);  // request the two temperature register bytes
+  if (Wire.available()) {
+    rtcTemp.b[1] = Wire.read();// 2's complement int portion - If hiByte bit7 is a 1 then the temperature is negative
+    rtcTemp.b[0] = Wire.read();// loByte is fraction portion
+    return rtcTemp.i / 64;
+    }
 }
