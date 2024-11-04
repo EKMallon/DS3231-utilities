@@ -1,16 +1,18 @@
-// This is based on code from the Needle Nose Pliers blog [which requires google translation from Japanese]
-// https://radiopench-blog96-fc2-com.translate.goog/blog-entry-943.html?_x_tr_sl=auto&_x_tr_tl=en&_x_tr_hl=en&_x_tr_pto=wapp&_x_tr_sch=http
-// which assumes GPS PPS is connected to pin D3, and RTC SQW on D2 - because the code nests those two hardware interrupts
 /*
-I have made several CHANGES here because he was using 2 UNOs (one of which was controlling the clock)
-while I run the test with only one UNO board that controls both the NEO6M gps and the DS3231 RTC module
-I must enable BBSQW for our Cave Pearl Loggers which cut the VCC line to the RTC to save power
-I'm using an UNO board powering a NEO6M at 5v while powering the RTC on the UNOs 3v line so the test 
-is run with the RTC near the Cr2032 runtime voltage because this affects the RTC oscilator
-I added input at the start so that the RTC aging register can be adjusted before the run
-All output is piped to the serial monitor window
+  This is based on code from the Needle Nose Pliers blog [which requires google translation from Japanese]
+  https://radiopench-blog96-fc2-com.translate.goog/blog-entry-943.html?_x_tr_sl=auto&_x_tr_tl=en&_x_tr_hl=en&_x_tr_pto=wapp&_x_tr_sch=http
+  which assumes GPS PPS is connected to pin D3, and RTC SQW on D2 - because the code nests those two hardware interrupts
+  
+  I have made several CHANGES here because he was using 2 UNOs (one of which was controlling the clock)
+  while I run the test with only one UNO board that controls both the NEO6M gps and the DS3231 RTC module
+  I must enable BBSQW for our Cave Pearl Loggers which cut the VCC line to the RTC to save power
+  I'm using an UNO board powering a NEO6M at 5v while powering the RTC on the UNOs 3v line so the test 
+  is run with the RTC near the Cr2032 runtime voltage because this affects the RTC oscilator
+  I added input at the start so that the RTC aging register can be adjusted before the run
+  All output is piped to the serial monitor window
    
-This is all described in detail at:
+  This is all described in detail at:
+  https://thecavepearlproject.org/2024/10/22/setting-accurate-rtc-time-with-a-gps-the-ds3231-aging-offset-to-reduce-drift/
 */
 
 #include <Wire.h>       // I2C bus coms library: RTC, EEprom & Sensors
@@ -20,6 +22,7 @@ char buff[10];          // String manipulation buffer
 int32_t diff; 
 float diffMs, aveSlope; 
 float data[60];         // Past data storage buffer (used for calculating approximate straight line) 
+uint32_t cycle=0;
 
 #define fileNAMEonly (strrchr(__FILE__, '/') ? strrchr(__FILE__, '/') + 1 : strrchr(__FILE__, '\\') ? strrchr(__FILE__, '\\') + 1 : __FILE__) //from: https://stackoverflow.com/questions/8487986/file-macro-shows-full-path
 const char compileDate[] PROGMEM = __DATE__;  //  built-in function in C++ makes text string: Jun 29 2023
@@ -39,7 +42,6 @@ uint16_t t_doy,t_year;                                   // current year //note:
 volatile boolean rtc_INT0_Flag = false;       // used in startup time sync delay //volatile because it's changed in an ISR // rtc_d2_alarm_ISR() sets this boolean flag=true when RTC alarm wakes the logger
 int8_t RTCagingOffset = 0;
 uint8_t byteBuffer1 = 9;                      // 1-byte (8 bit) type = unsigned number from 0 to 255
-uint16_t CycleCounter=0;
 int16_t rtc_TEMP_degCx4 = 0;
 float floatBuffer = 9999.99;                  // for float calculations
 
@@ -70,11 +72,11 @@ void setup() {
   Serial.print(F("    Compiled: "));Serial.print((__FlashStringHelper*)compileDate);
   Serial.print(F(" @ ")); Serial.println((__FlashStringHelper*)compileTime);
 
-    Serial.println(F("DS3231 Drift Check: MOVE gpsPPS signal jumper to pin D3, RTC SQW to D2"));
-    Serial.println(F("Wait until the PPS / LED blinks on the GPS module have started,"));Serial.println();
-    Serial.println(F("Then input the RTC aging register setting to use for this test: -128 to +127"));
-    Serial.println(F("(+)ive aging values slow the clock while (-)ive values increase clock speed"));
-    Serial.println(F("At 25°C, one LSB typically provides about 0.1ppm change in RTC oscilator frequency"));
+  Serial.println(F("DS3231 Drift Check: MOVE gpsPPS signal jumper to pin D3, RTC SQW to D2"));
+  Serial.println(F("Wait until the PPS / LED blinks on the GPS module have started,"));Serial.println();
+  Serial.println(F("Then input the RTC aging register setting to use for this test: -128 to +127"));
+  Serial.println(F("(+)ive aging values slow the clock while (-)ive values increase clock speed"));
+  Serial.println(F("At 25°C, one LSB typically provides about 0.1ppm change in RTC oscilator frequency"));
     
 do { 
     Serial.setTimeout(100000);                              // parseInt will normally “time out” after default set point is 1 second (1000 milliseconds).
@@ -94,7 +96,7 @@ do {
   Serial.println(F("Note: Drift in ms will continue to increase over time"));
   Serial.println(F("ppm values ​​​​typically vary by ±0.02 (or more for -M chips)"));
   Serial.println(F("9.999 means still collecting the initial 60 readings"));
-  Serial.println(); Serial.println(F("Temp(°C), Difference(msec), Error(ppm)")); 
+  Serial.println(); Serial.println(F("Count, Temp(°C), Difference(msec), Error(ppm)")); 
 
   // wait for SQW to stabilize
   // first cycle after can be short (?) https://forum.arduino.cc/t/ds3231-1hz-output-timing-profile/1139730/4
@@ -109,56 +111,35 @@ void loop() {
 
 if (gpsValid && rtcValid)
         {        
-        diff = Tclock - Tgps;             // difference between the RTC and the GPS pulses. Note: breaks with overflow once every 70 minutes, sending 4294967.500ms 
+        diff = Tclock - Tgps;                 // difference between the RTC and the GPS pulses. Note: breaks with overflow once every 70 minutes, sending 4294967.500ms 
         if((abs(diff))>500000){
-            Serial.print(".");            // must switch the reading order
+            Serial.print(F("."));;            // must switch the reading order
             noInterrupts(); gpsValid = false ; interrupts();
           }else{
-          //bitSet(PORTB,5);              // digitalWrite(13, HIGH);
+
           noInterrupts(); gpsValid = rtcValid = false ; interrupts();
+
+          Serial.print(cycle++);Serial.print(F(", "));
           
           rtc_TEMP_degCx4 = RTC_DS3231_getTemp(); floatBuffer=rtc_TEMP_degCx4/4.0;
           Serial.print(floatBuffer,2);
 
-          diffMs = diff / 1000.0;         // divide by 1000 to convert micros into millis
+          diffMs = diff / 1000.0;             // divide by 1000 to convert micros into millis
           aveSlope = calcSlope(diffMs);
           
-          dtostrf(diffMs, 7, 3, buff); // Convert to a string with 7 digits and 3 decimal places. 
-          Serial.print(",");Serial.print(buff); //Serial.print(F(",")); // Display the time difference. 
+          dtostrf(diffMs, 7, 3, buff);        // Convert to a string with 7 digits and 3 decimal places. 
+          Serial.print(F(","));Serial.print(buff); //Serial.print(F(",")); // Display the time difference. 
 
-          dtostrf(aveSlope, 6, 3, buff); // Convert to a string with 7 digits and 3 decimal places. 
+          dtostrf(aveSlope, 6, 3, buff);      // Convert to a string with 7 digits and 3 decimal places. 
           Serial.print(F(","));Serial.print(buff);//Serial.println(F(",ppm"));
           Serial.println();
-          //bitClear(PORTB,5);            // digitalWrite(13, LOW);
+
           }
         }
-
-/*        
-  while (state == false){}      // WaitS until an interrupt from the clock is received
-  state = false;                // state true when clockIRQ() executes - RTC usually LAGs the gps PPS pulse
-
-  bitSet(PORTB,5);              // digitalWrite(13, HIGH); 
-  
-  diff = Tclock - Tgps; // Calculate the time difference between the clock and the GPS. Breaks (overflows ) once every 70 minutes. 
-  diffMs = diff / 1000.0; 
-  aveSlope = calcSlope(diffMs); 
-
-  dtostrf(diffMs, 7, 3, buff); // Convert to a string with 7 digits and 3 decimal places. 
-  Serial.print(buff); Serial.print(F(" ms")); // Display the time difference. 
-
-  dtostrf(aveSlope, 6, 3, buff); // Convert to a string with 7 digits and 3 decimal places. 
-  Serial.print(F(", ")); Serial.print(buff);Serial.println(F(" ppm"));
-  //Serial.print(F(", After:")); Serial.print(CycleCounter++);Serial.println(F(" seconds"));
-  
-  bitClear(PORTB,5);            // digitalWrite(13, LOW); 
-
-*/
-  // Loop processing time ~52ms 
 }  //terminates loop()      // Loop processing time ~52ms 
-
 //===============================================================================
 
-// Returns int16_t temperature in Celsius times four. but defines a union
+// Returns int16_t temperature in Celsius times four via union
 int16_t RTC_DS3231_getTemp(){
     union int16_byte {
         int16_t i;
@@ -171,25 +152,22 @@ int16_t RTC_DS3231_getTemp(){
   
   Wire.requestFrom(DS3231_ADDRESS, 2);  // request the two temperature register bytes
   if (Wire.available()) {
-    rtcTemp.b[1] = Wire.read();// 2's complement int portion - If hiByte bit7 is a 1 then the temperature is negative
-    rtcTemp.b[0] = Wire.read();// loByte is fraction portion
+    rtcTemp.b[1] = Wire.read();         // 2's complement int portion - If hiByte bit7 is a 1 then the temperature is negative
+    rtcTemp.b[0] = Wire.read();         // loByte is fraction portion
     return rtcTemp.i / 64;
     }
 }
 
-void gpsIRQ() {       // Process the GPS interrupt.
+void gpsIRQ() {                         // Process the GPS interrupt.
     oldTgps = Tgps;
     Tgps = micros();
     gpsValid = true;
 } 
 
-void clockIRQ() {     // Process the clock interrupt.
-  //if (!rtcValid)    // we could force the update order(?) but drift can make the RTC preceed the GPS
-  //  {
+void clockIRQ() {                       // Process the clock interrupt.
     oldTclock = Tclock;
     Tclock = micros();
     rtcValid = true;
-  // }
 }
 
 void enableRTC1HzOutput(){
@@ -213,7 +191,6 @@ void disableRTC1HzOutput(){
 
 // ORIGINAL calcSlope function by Needle Nose Pliers [blog requires google translation from Japanese]
 // https://radiopench-blog96-fc2-com.translate.goog/blog-entry-943.html?_x_tr_sl=auto&_x_tr_tl=en&_x_tr_hl=en&_x_tr_pto=wapp&_x_tr_sch=http
-
 float calcSlope(float d) { // Calculate the slope of the data and return it as a value 
   float sumXY = 0.0; 
   float sumX = 0.0; 
@@ -244,19 +221,6 @@ float calcSlope(float d) { // Calculate the slope of the data and return it as a
     } 
   return a; 
 } 
-
-/*
-void gpsIRQ() {       // Process the GPS interrupt. 
-  oldTgps = Tgps; 
-  Tgps = micros(); 
-} 
-
-void clockIRQ() {     // Process the clock interrupt. 
-  oldTclock = Tclock; 
-  Tclock = micros(); 
-  state = true; 
-}
-*/
 
 byte i2c_setRegisterBit(uint8_t deviceAddress, uint8_t registerAddress, uint8_t bitPosition, bool state) 
 //-----------------------------------------------------------------------------------------
@@ -295,13 +259,11 @@ byte i2c_writeRegisterByte(uint8_t deviceAddress, uint8_t registerAddress, uint8
 
   if (result > 0)   //error checking
   {
-    //if(ECHO_TO_SERIAL){                           //NOTE: only call halt on error if in debug mode!
       Serial.print(F("FAIL in I2C register write! Result code: "));
       Serial.println(result); Serial.flush();
       while(1); // stops the processor
-    //}
+
   }
-  // LowPower.powerDown(SLEEP_15MS, ADC_OFF, BOD_OFF);  // some sensors need this settling time after a register change?
   return result;
 }
 
